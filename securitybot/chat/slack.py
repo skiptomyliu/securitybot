@@ -84,7 +84,18 @@ class Slack(Chat):
                     }
             }
         '''
-        return self._api_call('users.list')['members']
+        members = []
+        next_cursor = None
+        while True:
+            response = self._api_call('users.list', cursor=next_cursor)
+            active_members = [m for m in response['members'] if m.get('deleted') is False]
+            members.extend(active_members)
+            logging.debug('Fetched {} members', len(members))
+            next_cursor = response['response_metadata'].get('next_cursor')
+            if not next_cursor:
+                break
+
+        return members
 
     def get_messages(self):
         # type () -> List[Dict[str, Any]]
