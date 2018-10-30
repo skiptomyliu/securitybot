@@ -61,7 +61,7 @@ class Slack(Chat):
             if cur_try > RATE_LIMIT_TRIES:
                 raise ChatException('Slack rate limit max tries reached.')
 
-            if response.get('error', '').lower() == 'ratelimited' and rate_limit_retry is True:
+            if response.get('error', '').lower() == 'ratelimited' and rate_limit_retry:
                 logging.debug('Rate limiting reached.  Sleeping {}.'.format(RATE_LIMIT_SLEEP))
                 cur_try += 1
                 time.sleep(RATE_LIMIT_SLEEP)
@@ -105,7 +105,7 @@ class Slack(Chat):
         next_cursor = None
         while True:
             response = self._api_call('users.list', cursor=next_cursor)
-            active_members = [m for m in response['members'] if m.get('deleted') is False]
+            active_members = [m for m in response['members'] if not m.get('deleted')]
             members.extend(active_members)
             logging.debug('Fetched {} members'.format(len(members)))
 
