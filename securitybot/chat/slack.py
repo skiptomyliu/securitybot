@@ -7,11 +7,15 @@ __email__ = 'abertsch@dropbox.com'
 import logging
 from slackclient import SlackClient
 import json
+import time
 
 from securitybot.user import User
 from securitybot.chat.chat import Chat, ChatException
 
 from typing import Any, Dict, List
+
+RATE_LIMIT_SLEEP = 10 # sleep 10 seconds when rate limit
+RATE_LIMIT_TRIES = 6  # maximum 6 tries (60s) when rate limit reached
 
 class Slack(Chat):
     '''
@@ -37,12 +41,13 @@ class Slack(Chat):
             raise ChatException('Unable to connect to Slack API.')
         logging.info('Connection to Slack API successful!')
 
-    def _api_call(self, method, **kwargs):
+    def _api_call(self, method, rate_limit_retry=True, **kwargs):
         # type: (str, **Any) -> Dict[str, Any]
         '''
         Performs a _validated_ Slack API call. After performing a normal API
-        call using SlackClient, validate that the call returned 'ok'. If not,
-        log and error.
+        call using SlackClient, validate that it has not been rate limited.  If it has,
+        retry every RATE_LIMIT_SLEEP until RATE_LIMIT_TRIES reached.
+        Validate that the call returned 'ok'. If not, log and error.
 
         Args:
             method (str): The API endpoint to call.
@@ -50,7 +55,19 @@ class Slack(Chat):
         Returns:
             (dict): Parsed JSON from the response.
         '''
-        response = self._slack.api_call(method, **kwargs)
+        cur_try = 0
+        while True:
+            response = self._slack.api_call(method, **kwargs)
+            if cur_try > RATE_LIMIT_TRIES:
+                raise ChatException('Slack rate limit max tries reached.')
+
+            if response.get('error', '').lower() == 'ratelimited' and rate_limit_retry is True:
+                logging.debug('Rate limiting reached.  Sleeping {}.'.format(RATE_LIMIT_SLEEP))
+                cur_try += 1
+                time.sleep(RATE_LIMIT_SLEEP)
+            else:
+                break
+
         if not ('ok' in response and response['ok']):
             if kwargs:
                 logging.error('Bad Slack API request on {} with {}'.format(method, kwargs))
