@@ -110,7 +110,7 @@ class Slack(Chat):
             logging.debug('Fetched {} members'.format(len(members)))
 
             metadata = response.get('response_metadata')
-            if not metadata or metadata.get('next_cursor'):
+            if not metadata or not metadata.get('next_cursor'):
                 break
 
         return members
