@@ -14,6 +14,9 @@ from securitybot.chat.chat import Chat, ChatException
 
 from typing import Any, Dict, List
 
+RATE_LIMIT_SLEEP = 10 # sleep 10 seconds when rate limit
+RATE_LIMIT_TRIES = 6  # maximum 6 tries (60s) when rate limit reached
+
 class Slack(Chat):
     '''
     A wrapper around the Slack API designed for Securitybot.
@@ -38,7 +41,7 @@ class Slack(Chat):
             raise ChatException('Unable to connect to Slack API.')
         logging.info('Connection to Slack API successful!')
 
-    def _api_call(self, method, **kwargs):
+    def _api_call(self, method, rate_limit_retry=False, **kwargs):
         # type: (str, **Any) -> Dict[str, Any]
         '''
         Performs a _validated_ Slack API call. After performing a normal API
@@ -51,7 +54,19 @@ class Slack(Chat):
         Returns:
             (dict): Parsed JSON from the response.
         '''
-        response = self._slack.api_call(method, **kwargs)
+        cur_try = 0
+        while True:
+            response = self._slack.api_call(method, **kwargs)
+            if cur_try > RATE_LIMIT_TRIES:
+                raise ChatException('Slack rate limit max tries reached.')
+
+            if response.get('error', '').lower() == 'ratelimited' and rate_limit_retry:
+                logging.debug('Rate limiting reached.  Sleeping {}.'.format(RATE_LIMIT_SLEEP))
+                cur_try += 1
+                time.sleep(RATE_LIMIT_SLEEP)
+            else:
+                break
+
         if not ('ok' in response and response['ok']):
             if kwargs:
                 logging.error('Bad Slack API request on {} with {}'.format(method, kwargs))
@@ -88,17 +103,15 @@ class Slack(Chat):
         members = []
         next_cursor = None
         while True:
-            response = self._api_call('users.list', cursor=next_cursor)
-            if response.get('error', '').lower() == 'ratelimited':
-                logging.debug('Hit rate limiting on users.list.  Sleeping 10s and trying again.')
-                time.sleep(10)
-            else:
-                active_members = [m for m in response['members'] if m.get('deleted') is False]
-                members.extend(active_members)
-                logging.debug('Fetched {} members', len(members))
-                next_cursor = response['response_metadata'].get('next_cursor')
-                if not next_cursor:
-                    break
+            response = self._api_call('users.list', rate_limit_retry=True, cursor=next_cursor)
+            active_members = [m for m in response['members'] if not m.get('deleted')]
+            members.extend(active_members)
+            logging.debug('Fetched {} members'.format(len(members)))
+
+            metadata = response.get('response_metadata')
+            next_cursor = metadata.get('next_cursor') if metadata else None
+            if not metadata or not metadata.get('next_cursor'):
+                break
 
         return members
 
